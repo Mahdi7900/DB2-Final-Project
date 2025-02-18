@@ -1,3 +1,5 @@
+from fastapi import HTTPException, Query
+from sqlalchemy import asc, desc, or_
 from fastapi import FastAPI, HTTPException, Depends, Query
 from sqlalchemy import Index, create_engine, or_, func, asc, desc
 from sqlalchemy.ext.declarative import declarative_base
@@ -183,32 +185,34 @@ SORT_COLUMNS = {
 @app.get("/apps/", response_model=dict)
 def get_apps(
     db: Session = Depends(get_db),
-    min_rating: float = Query(None),
-    max_rating: float = Query(None),
-    min_price: float = Query(None),
-    max_price: float = Query(None),
+    min_rating: float = Query(None, ge=0, le=5),
+    max_rating: float = Query(None, ge=0, le=5),
+    min_price: float = Query(None, ge=0),
+    max_price: float = Query(None, ge=0),
     is_free: bool = Query(None),
-    category_id: int = Query(None),
+    category_id: int = Query(None, ge=1),
     ad_supported: bool = Query(None),
     in_app_purchases: bool = Query(None),
     editors_choice: bool = Query(None),
     search_query: str = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
-    sort_by: str = Query("rating"),
-    sort_order: str = Query("desc")
+    sort_by: str = Query("rating", regex="|".join(SORT_COLUMNS.keys())),
+    sort_order: str = Query("desc", regex="asc|desc")
 ):
-    if sort_by not in SORT_COLUMNS:
-        raise HTTPException(status_code=400, detail="Invalid sort_by value")
-
     try:
         start_time = time.perf_counter()
+
+        if sort_by not in SORT_COLUMNS:
+            raise HTTPException(
+                status_code=400, detail="Invalid sort_by value")
+
         order = desc(SORT_COLUMNS[sort_by]) if sort_order == "desc" else asc(
             SORT_COLUMNS[sort_by])
 
-        query = db.query(App).options(
-            selectinload(App.category),
-            selectinload(App.developer)
+        query = (
+            db.query(App)
+            .options(selectinload(App.category), selectinload(App.developer))
         )
 
         if min_rating is not None:
@@ -227,7 +231,7 @@ def get_apps(
             query = query.filter(App.in_app_purchases == in_app_purchases)
         if editors_choice is not None:
             query = query.filter(App.editors_choice == editors_choice)
-        if category_id:
+        if category_id is not None:
             query = query.filter(App.category_id == category_id)
 
         if search_query:
@@ -245,18 +249,18 @@ def get_apps(
 
         if sort_by in ["Category Name", "Developer Name"]:
             query = query.join(Category).join(Developer)
-        query = query.order_by(order)
 
+        query = query.order_by(order)
         total_count = query.count()
         total_pages = math.ceil(total_count / page_size)
+        offset = (page - 1) * page_size
+
+        apps = query.offset(offset).limit(page_size).all()
 
         max_buttons = 5
         start_page = max(1, page - 2)
         end_page = min(total_pages, start_page + max_buttons - 1)
         page_numbers = list(range(start_page, end_page + 1))
-
-        offset = (page - 1) * page_size
-        apps = query.offset(offset).limit(page_size).all()
 
         end_time = time.perf_counter()
         execution_time = end_time - start_time
@@ -272,10 +276,10 @@ def get_apps(
                 {
                     "Id": app.app_id,
                     "App Name": app.app_name,
-                    "Category Name": app.category.category_name if app.category else None,
-                    "Developer Name": app.developer.developer_name if app.developer else None,
-                    "Developer Email": app.developer.developer_email if app.developer else None,
-                    "Developer Website": app.developer.developer_website if app.developer else None,
+                    "Category Name": getattr(app.category, "category_name", None),
+                    "Developer Name": getattr(app.developer, "developer_name", None),
+                    "Developer Email": getattr(app.developer, "developer_email", None),
+                    "Developer Website": getattr(app.developer, "developer_website", None),
                     "Rating": app.rating,
                     "Rating Count": app.rating_count,
                     "Content Rating": app.content_rating,
