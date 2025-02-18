@@ -102,14 +102,6 @@ def create_app(
     return {"app_id": app_entry.app_id, "app_name": app_entry.app_name}
 
 
-@app.get("/apps/{app_id}", response_model=dict)
-def read_app(app_id: int, db: Session = Depends(get_db)):
-    app_entry = db.query(App).filter(App.app_id == app_id).first()
-    if app_entry is None:
-        raise HTTPException(status_code=404, detail="App not found")
-    return {"app_id": app_entry.app_id, "app_name": app_entry.app_name, "is_free": app_entry.is_free}
-
-
 @app.put("/apps/{app_id}", response_model=dict)
 def update_app(app_id: int, app_data: dict, db: Session = Depends(get_db)):
     app_entry = db.query(App).options(
